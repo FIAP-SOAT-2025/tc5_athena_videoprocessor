@@ -1,0 +1,253 @@
+{
+  "info": {
+    "name": "Athena Process Videos API",
+    "description": "API for processing videos in Athena",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Sign In",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.access_token) {",
+                  "    pm.collectionVariables.set('token', jsonData.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/signin",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "signin"]
+            },
+            "description": "Authenticate a user and receive a JWT token."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"basic\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["users"]
+            },
+            "description": "Create a new user. Role can be 'admin' or 'basic'."
+          },
+          "response": []
+        },
+        {
+          "name": "Get User by Identifier",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/:identifier",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", ":identifier"],
+              "variable": [
+                {
+                  "key": "identifier",
+                  "value": "john@example.com",
+                  "description": "User email or ID"
+                }
+              ]
+            },
+            "description": "Get a user by identifier (email or ID). Requires authentication."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Video",
+      "item": [
+        {
+          "name": "Upload Video",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "Video file (mp4, avi, mov, mkv, wmv, flv, webm)"
+                },
+                {
+                  "key": "size",
+                  "value": "1024",
+                  "type": "text",
+                  "description": "File size"
+                },
+                {
+                  "key": "file_name",
+                  "value": "my_video.mp4",
+                  "type": "text",
+                  "description": "File name"
+                },
+                {
+                  "key": "extension",
+                  "value": "mp4",
+                  "type": "text",
+                  "description": "File extension (optional)"
+                },
+                {
+                  "key": "userId",
+                  "value": "user-id-here",
+                  "type": "text",
+                  "description": "User ID"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/video",
+              "host": ["{{baseUrl}}"],
+              "path": ["video"]
+            },
+            "description": "Upload a video file for processing. Supported formats: mp4, avi, mov, mkv, wmv, flv, webm. Requires authentication."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Processing Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/video/status/:jobId",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "status", ":jobId"],
+              "variable": [
+                {
+                  "key": "jobId",
+                  "value": "job-id-here",
+                  "description": "The job ID returned from the upload"
+                }
+              ]
+            },
+            "description": "Get the processing status of a video job. Returns state (waiting, active, completed, failed), progress, result, and error information. Requires authentication."
+          },
+          "response": []
+        },
+        {
+          "name": "Download Processed Video",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/video/:userId/:videoId",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", ":userId", ":videoId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "user-id-here",
+                  "description": "The user ID"
+                },
+                {
+                  "key": "videoId",
+                  "value": "video-id-here",
+                  "description": "The video ID returned from the upload"
+                }
+              ]
+            },
+            "description": "Download the processed video as a zip file containing extracted frames. Requires authentication."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

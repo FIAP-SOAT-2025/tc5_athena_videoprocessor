@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.gitignore
+*.md
+.env*
+coverage
+uploads
+videos
+outputs
+iac
