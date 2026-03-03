@@ -1,98 +1,419 @@
 <p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
+  <img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" />
 </p>
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+<h1 align="center">Athena Video Processor</h1>
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
+<p align="center">
+  Sistema de processamento de vídeos construído com NestJS, que extrai frames de vídeos e gera arquivos ZIP compactados.
 </p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
 
-## Description
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen" alt="Node Version" />
+  <img src="https://img.shields.io/badge/typescript-%5E5.7.3-blue" alt="TypeScript Version" />
+  <img src="https://img.shields.io/badge/nestjs-%5E11.0.1-red" alt="NestJS Version" />
+  <img src="https://img.shields.io/badge/license-UNLICENSED-gray" alt="License" />
+</p>
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 📋 Índice
 
-## Project setup
+- [Descrição](#-descrição)
+- [Arquitetura](#-arquitetura)
+- [Tecnologias](#-tecnologias)
+- [Pré-requisitos](#-pré-requisitos)
+- [Instalação](#-instalação)
+- [Configuração](#-configuração)
+- [Execução](#-execução)
+- [API Endpoints](#-api-endpoints)
+- [Processamento de Vídeos](#-processamento-de-vídeos)
+- [Monitoramento](#-monitoramento)
+- [Testes](#-testes)
+- [Docker](#-docker)
+- [Estrutura do Projeto](#-estrutura-do-projeto)
 
-```bash
-$ npm install
+## 📝 Descrição
+
+O **Athena Video Processor** é uma API RESTful para processamento assíncrono de vídeos. O sistema permite:
+
+- Upload de vídeos em múltiplos formatos (MP4, AVI, MOV, MKV, WMV, FLV, WEBM)
+- Extração automática de frames (1 frame por segundo)
+- Compressão dos frames em arquivo ZIP
+- Armazenamento local ou em AWS S3
+- Acompanhamento do status de processamento em tempo real
+- Download do resultado processado
+
+## 🏗 Arquitetura
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Client    │────▶│   NestJS    │────▶│    Redis    │
+│             │     │     API     │     │   (Queue)   │
+└─────────────┘     └─────────────┘     └─────────────┘
+                           │                   │
+                           ▼                   ▼
+                    ┌─────────────┐     ┌─────────────┐
+                    │  PostgreSQL │     │   Worker    │
+                    │  (Prisma)   │     │  (BullMQ)   │
+                    └─────────────┘     └─────────────┘
+                                               │
+                                               ▼
+                                        ┌─────────────┐
+                                        │   FFmpeg    │
+                                        │  (Frames)   │
+                                        └─────────────┘
+                                               │
+                                               ▼
+                                        ┌─────────────┐
+                                        │  S3/Local   │
+                                        │  Storage    │
+                                        └─────────────┘
 ```
 
-## Compile and run the project
+## 🛠 Tecnologias
+
+| Tecnologia | Versão | Descrição |
+|------------|--------|-----------|
+| **Node.js** | ≥20.x | Runtime JavaScript |
+| **NestJS** | ^11.0.1 | Framework backend |
+| **TypeScript** | ^5.7.3 | Linguagem tipada |
+| **Prisma** | ^6.8.2 | ORM para PostgreSQL |
+| **BullMQ** | ^5.67.2 | Gerenciamento de filas |
+| **Redis** | 7.x | Broker de mensagens |
+| **PostgreSQL** | 16.x | Banco de dados |
+| **FFmpeg** | - | Processamento de vídeo |
+| **AWS S3** | - | Armazenamento em nuvem |
+| **Prometheus** | - | Métricas |
+| **Grafana** | - | Dashboards |
+
+## 📋 Pré-requisitos
+
+- **Node.js** >= 20.0.0
+- **npm** >= 10.0.0
+- **Docker** e **Docker Compose** (recomendado)
+- **FFmpeg** (instalado automaticamente via dependência)
+
+## 🚀 Instalação
+
+### Clone o repositório
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+git clone <repository-url>
+cd tc5-videoprocessor
 ```
 
-## Run tests
+### Instale as dependências
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm install
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Configure as variáveis de ambiente
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+cp .env.example .env
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### Execute as migrações do banco de dados
 
-## Resources
+```bash
+npx prisma migrate deploy
+npx prisma generate
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+### Popule o banco com dados iniciais (opcional)
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```bash
+npx prisma db seed
+```
 
-## Support
+## ⚙️ Configuração
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+Edite o arquivo `.env` com suas configurações:
 
-## Stay in touch
+```env
+# Database
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres123
+POSTGRES_DB=tc5hack
+DATABASE_URL=postgresql://postgres:postgres123@localhost:5432/tc5hack?schema=public
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
 
-## License
+# JWT
+JWT_SECRET=your-super-secret-key
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+# Application
+NODE_ENV=development
+PORT=3000
+
+# AWS S3 (opcional)
+AWS_S3_BUCKET=your-bucket-name
+
+# Output
+OUTPUT_FILE_NAME=output.zip
+
+# Grafana
+GRAFANA_USER=admin
+GRAFANA_PASSWORD=admin
+```
+
+## ▶️ Execução
+
+### Desenvolvimento
+
+```bash
+# Iniciar serviços com Docker
+docker-compose up -d postgres redis
+
+# Executar aplicação em modo desenvolvimento
+npm run start:dev
+```
+
+### Produção
+
+```bash
+# Build da aplicação
+npm run build
+
+# Executar em produção
+npm run start:prod
+```
+
+### Com Docker (recomendado)
+
+```bash
+# Iniciar todos os serviços
+docker-compose up -d
+
+# Verificar logs
+docker-compose logs -f api
+```
+
+## 📡 API Endpoints
+
+### Autenticação
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `POST` | `/auth/signin` | Autenticar usuário |
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```
+
+### Usuários
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `POST` | `/users` | Criar novo usuário |
+
+### Vídeos
+
+| Método | Endpoint | Descrição | Auth |
+|--------|----------|-----------|------|
+| `POST` | `/video` | Upload de vídeo | ✅ |
+| `GET` | `/video/status/:jobId` | Status do processamento | ✅ |
+| `GET` | `/video/:userId/:videoId` | Download do resultado | ✅ |
+
+### Upload de Vídeo
+
+**Request (multipart/form-data):**
+- `file`: Arquivo de vídeo
+- `file_name`: Nome do arquivo
+- `extension`: Extensão (opcional)
+- `userId`: ID do usuário
+
+**Response:**
+```json
+{
+  "jobId": "uuid",
+  "status": "Processing",
+  "videoId": "uuid"
+}
+```
+
+### Monitoramento
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/metrics` | Métricas Prometheus |
+| `GET` | `/admin/queues` | Dashboard Bull Board |
+
+## 🎬 Processamento de Vídeos
+
+### Fluxo de Processamento
+
+1. **Upload**: Vídeo é recebido e salvo no storage
+2. **Enfileiramento**: Job é adicionado à fila BullMQ
+3. **Processamento**: Worker extrai frames usando FFmpeg (1 fps)
+4. **Compressão**: Frames são compactados em ZIP
+5. **Armazenamento**: ZIP é salvo no S3 ou storage local
+6. **Notificação**: Status é atualizado no banco de dados
+
+### Status do Vídeo
+
+| Status | Descrição |
+|--------|-----------|
+| `PENDING` | Aguardando processamento |
+| `PROCESSING` | Em processamento |
+| `COMPLETED` | Processamento concluído |
+| `ERROR` | Erro no processamento |
+
+### Formatos Suportados
+
+- MP4, AVI, MOV, MKV, WMV, FLV, WEBM
+
+## 📊 Monitoramento
+
+### Prometheus + Grafana
+
+O projeto inclui configuração completa de monitoramento:
+
+```bash
+# Acessar Grafana
+http://localhost:3001
+
+# Credenciais padrão
+Usuário: admin
+Senha: admin
+```
+
+### Dashboards Disponíveis
+
+- **API NestJS Metrics**: Métricas da aplicação
+- **PostgreSQL**: Métricas do banco de dados
+- **AWS S3**: Métricas do storage (se configurado)
+
+### Bull Board
+
+Acesse o painel de monitoramento de filas:
+
+```
+http://localhost:3000/admin/queues
+```
+
+## 🧪 Testes
+
+```bash
+# Testes unitários
+npm run test
+
+# Testes com watch mode
+npm run test:watch
+
+# Cobertura de testes
+npm run test:cov
+
+# Testes e2e
+npm run test:e2e
+```
+
+## 🐳 Docker
+
+### Serviços
+
+| Serviço | Porta | Descrição |
+|---------|-------|-----------|
+| `api` | 3000 | Aplicação NestJS |
+| `postgres` | 5432 | Banco de dados |
+| `redis` | 6379 | Broker de mensagens |
+| `prometheus` | 9090 | Coleta de métricas |
+| `grafana` | 3001 | Visualização de métricas |
+| `postgres-exporter` | 9187 | Exportador PostgreSQL |
+
+### Comandos Úteis
+
+```bash
+# Iniciar todos os serviços
+docker-compose up -d
+
+# Parar todos os serviços
+docker-compose down
+
+# Reconstruir imagens
+docker-compose up -d --build
+
+# Ver logs
+docker-compose logs -f [service]
+
+# Acessar container
+docker exec -it [container-name] sh
+```
+
+## 📁 Estrutura do Projeto
+
+```
+tc5-videoprocessor/
+├── prisma/
+│   ├── migrations/          # Migrações do banco
+│   ├── schema.prisma        # Schema do Prisma
+│   └── seed.ts              # Seed do banco
+├── src/
+│   ├── database/            # Conexão com banco
+│   ├── storage/             # Módulo de armazenamento
+│   ├── video/
+│   │   ├── domain/          # Entidades
+│   │   ├── gateways/
+│   │   │   ├── processor/   # Serviço FFmpeg
+│   │   │   ├── queue/       # Consumer BullMQ
+│   │   │   └── repository/  # Repositório Prisma
+│   │   └── usecases/        # Casos de uso
+│   ├── app.module.ts        # Módulo principal
+│   └── main.ts              # Bootstrap
+├── monitoring/
+│   ├── grafana/
+│   │   ├── dashboards/      # Dashboards JSON
+│   │   └── provisioning/    # Configuração automática
+│   └── prometheus.yml       # Configuração Prometheus
+├── test/                    # Testes e2e
+├── docker-compose.yml       # Orquestração Docker
+├── Dockerfile               # Build da aplicação
+└── package.json
+```
+
+## 🔐 Autenticação
+
+O sistema utiliza JWT para autenticação. Após o login, inclua o token no header:
+
+```
+Authorization: Bearer <token>
+```
+
+### Usuário de Teste
+
+```
+Email: admin@athena.com
+Senha: 123456
+```
+
+## 📝 Postman Collection
+
+Importe a collection disponível em [postman_collection.json](postman_collection.json) para testar a API.
+
+## 🤝 Contribuição
+
+1. Faça um fork do projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-feature`)
+3. Commit suas mudanças (`git commit -m 'Adiciona nova feature'`)
+4. Push para a branch (`git push origin feature/nova-feature`)
+5. Abra um Pull Request
+
+## 📄 Licença
+
+Este projeto está sob licença privada (UNLICENSED).
+
+## 👥 Autores
+
+- **Time TC5** - Desenvolvimento inicial
+
+---
+
+<p align="center">
+  Desenvolvido com ❤️ usando <a href="https://nestjs.com">NestJS</a>
+</p>
