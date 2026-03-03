@@ -1,0 +1,232 @@
+name: Athena Deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ['/**']
+  pull_request:
+    branches: [main]
+    paths: ['/**']
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - destroy
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.6.0
+  EKS_CLUSTER_NAME: eks-tc5-g192-athena-v1-v1
+
+jobs:
+  check-dependencies:
+    name: Check Dependencies
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      infra-exists: ${{ steps.check-deps.outputs.infra-exists }}
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check Dependencies
+        id: check-deps
+        run: |
+          # Check EKS cluster
+          if aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} &> /dev/null; then
+            echo "infra-exists=true" >> $GITHUB_OUTPUT
+            echo "EKS cluster exists"
+          else
+            echo "infra-exists=false" >> $GITHUB_OUTPUT
+            echo "EKS cluster not found"
+          fi
+
+  build-and-push:
+    name: Build and Push Docker Image
+    needs: [check-dependencies]
+    runs-on: ubuntu-latest
+    if: needs.check-dependencies.outputs.infra-exists == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply')
+    environment: production
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/tc5-athena-videoprocessor:latest
+
+  terraform-apply:
+    name: Worker Deploy
+    needs: [check-dependencies, build-and-push]
+    runs-on: ubuntu-latest
+    if: needs.check-dependencies.outputs.infra-exists == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply')
+    defaults:
+      run:
+        working-directory: ./iac/terraform
+    environment: production
+    env:
+      TF_VAR_db_user: ${{ secrets.DB_USER }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_db_name: ${{ secrets.DB_NAME }}
+      TF_VAR_dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+      TF_VAR_dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          kubectl get nodes
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Debug pods on failure
+        if: failure()
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n tc5-athena -o wide || true
+          echo "=== Describe pods ==="
+          kubectl describe pods -n tc5-athena || true
+          echo "=== Logs (current) ==="
+          kubectl logs -n tc5-athena -l app=tc5-athena-videoprocessor --tail=100 || true
+          echo "=== Logs (previous crash) ==="
+          kubectl logs -n tc5-athena -l app=tc5-athena-videoprocessor --previous --tail=100 || true
+          echo "=== Events ==="
+          kubectl get events -n tc5-athena --sort-by='.lastTimestamp' || true
+
+      - name: Verify Worker Deployment
+        run: |
+          echo "Waiting for worker pod to be ready..."
+          kubectl wait --for=condition=ready pod -l app=tc5-athena-videoprocessor -n tc5-athena --timeout=5m
+          kubectl get pods -n tc5-athena
+
+  terraform-destroy:
+    name: Worker Destroy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'destroy'
+    defaults:
+      run:
+        working-directory: ./iac/terraform
+    environment: production
+    env:
+      TF_VAR_db_user: ${{ secrets.DB_USER }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_db_name: ${{ secrets.DB_NAME }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+      
+      - name: Check if EKS cluster exists
+        id: check-cluster
+        run: |
+          if aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} &> /dev/null; then
+            echo "cluster-exists=true" >> $GITHUB_OUTPUT
+            echo "EKS cluster exists, configuring kubectl..."
+          else
+            echo "cluster-exists=false" >> $GITHUB_OUTPUT
+            echo "EKS cluster not found, skipping kubectl configuration"
+          fi
+      
+      - name: Configure kubectl
+        if: steps.check-cluster.outputs.cluster-exists == 'true'
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          kubectl get nodes || echo "Failed to get nodes, but continuing..."
+      
+      - name: Terraform Init
+        run: terraform init
+      
+      - name: Check Terraform State
+        id: check-state
+        run: |
+          if [ -f "terraform.tfstate" ]; then
+            echo "state-exists=true" >> $GITHUB_OUTPUT
+            echo "Terraform state found. Contents:"
+            cat terraform.tfstate
+          else
+            echo "state-exists=false" >> $GITHUB_OUTPUT
+            echo "No Terraform state found"
+          fi
+      
+      - name: Terraform Plan Destroy
+        if: steps.check-state.outputs.state-exists == 'true'
+        run: terraform plan -destroy -no-color
+        continue-on-error: true
+      
+      - name: Terraform Destroy
+        if: steps.check-state.outputs.state-exists == 'true'
+        run: |
+          echo "Destroying API infrastructure..."
+          terraform destroy -auto-approve
+      
+      - name: Verify Destruction
+        run: |
+          echo "Verifying resource destruction..."
+          if [ "${{ steps.check-cluster.outputs.cluster-exists }}" == "true" ]; then
+            kubectl get pods -n tc5-athena 2>/dev/null || echo "Namespace tc5-athena destroyed or not found"
+          fi
+          echo "Worker destroy job completed"
