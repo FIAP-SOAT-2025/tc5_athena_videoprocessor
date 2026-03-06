@@ -2,10 +2,10 @@
   <img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" />
 </p>
 
-<h1 align="center">Athena Video Processor</h1>
+<h1 align="center">Video Processor Worker</h1>
 
 <p align="center">
-  Sistema de processamento de vídeos construído com NestJS, que extrai frames de vídeos e gera arquivos ZIP compactados.
+  Worker de processamento de vídeos que consome jobs de uma fila Redis/BullMQ, extrai frames usando FFmpeg e gera arquivos ZIP compactados.
 </p>
 
 <p align="center">
@@ -24,8 +24,7 @@
 - [Instalação](#-instalação)
 - [Configuração](#-configuração)
 - [Execução](#-execução)
-- [API Endpoints](#-api-endpoints)
-- [Processamento de Vídeos](#-processamento-de-vídeos)
+- [Fluxo de Processamento](#-fluxo-de-processamento)
 - [Monitoramento](#-monitoramento)
 - [Testes](#-testes)
 - [Docker](#-docker)
@@ -33,40 +32,56 @@
 
 ## 📝 Descrição
 
-O **Athena Video Processor** é uma API RESTful para processamento assíncrono de vídeos. O sistema permite:
+O **Video Processor Worker** é um serviço de processamento assíncrono de vídeos, projetado para funcionar como um worker que consome jobs de uma fila Redis. Este serviço **não expõe rotas de API REST** - ele apenas processa jobs enviados por outros serviços.
 
-- Upload de vídeos em múltiplos formatos (MP4, AVI, MOV, MKV, WMV, FLV, WEBM)
-- Extração automática de frames (1 frame por segundo)
+### Funcionalidades
+
+- Consumo de jobs da fila `video-processing` (BullMQ)
+- Extração automática de frames (1 frame por segundo) usando FFmpeg
 - Compressão dos frames em arquivo ZIP
-- Armazenamento local ou em AWS S3
-- Acompanhamento do status de processamento em tempo real
-- Download do resultado processado
+- Armazenamento do resultado no AWS S3
+- Atualização de status no banco de dados PostgreSQL
+- Métricas de performance via Prometheus
+- Dashboard de monitoramento de filas via Bull Board
 
 ## 🏗 Arquitetura
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Client    │────▶│   NestJS    │────▶│    Redis    │
-│             │     │     API     │     │   (Queue)   │
-└─────────────┘     └─────────────┘     └─────────────┘
-                           │                   │
-                           ▼                   ▼
-                    ┌─────────────┐     ┌─────────────┐
-                    │  PostgreSQL │     │   Worker    │
-                    │  (Prisma)   │     │  (BullMQ)   │
-                    └─────────────┘     └─────────────┘
-                                               │
-                                               ▼
-                                        ┌─────────────┐
-                                        │   FFmpeg    │
-                                        │  (Frames)   │
-                                        └─────────────┘
-                                               │
-                                               ▼
-                                        ┌─────────────┐
-                                        │  S3/Local   │
-                                        │  Storage    │
-                                        └─────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    SERVIÇOS EXTERNOS                        │
+│  (API de Upload, Microserviços, etc.)                       │
+└─────────────────────┬───────────────────────────────────────┘
+                      │ Envia jobs para a fila
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      REDIS (BullMQ)                         │
+│                  Fila: video-processing                     │
+└─────────────────────┬───────────────────────────────────────┘
+                      │ Consome jobs
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 VIDEO PROCESSOR WORKER                       │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  VideoConsumer (BullMQ Worker)                      │    │
+│  │    │                                                │    │
+│  │    ├──▶ Busca vídeo no S3                          │    │
+│  │    ├──▶ Extrai frames (FFmpeg - 1 fps)             │    │
+│  │    ├──▶ Comprime frames em ZIP                      │    │
+│  │    ├──▶ Armazena ZIP no S3                         │    │
+│  │    └──▶ Atualiza status no PostgreSQL              │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  Endpoints disponíveis (apenas monitoramento):               │
+│    • GET /metrics      → Métricas Prometheus                │
+│    • GET /admin/queues → Dashboard Bull Board               │
+└─────────────────────────────────────────────────────────────┘
+                      │
+          ┌───────────┴───────────┐
+          ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐
+│   PostgreSQL    │     │     AWS S3      │
+│  (Status/Dados) │     │   (Arquivos)    │
+└─────────────────┘     └─────────────────┘
 ```
 
 ## 🛠 Tecnologias
@@ -76,21 +91,22 @@ O **Athena Video Processor** é uma API RESTful para processamento assíncrono d
 | **Node.js** | ≥20.x | Runtime JavaScript |
 | **NestJS** | ^11.0.1 | Framework backend |
 | **TypeScript** | ^5.7.3 | Linguagem tipada |
-| **Prisma** | ^6.8.2 | ORM para PostgreSQL |
-| **BullMQ** | ^5.67.2 | Gerenciamento de filas |
+| **BullMQ** | ^5.67.2 | Processamento de filas |
 | **Redis** | 7.x | Broker de mensagens |
-| **PostgreSQL** | 16.x | Banco de dados |
-| **FFmpeg** | - | Processamento de vídeo |
-| **AWS S3** | - | Armazenamento em nuvem |
-| **Prometheus** | - | Métricas |
-| **Grafana** | - | Dashboards |
+| **FFmpeg** | - | Extração de frames |
+| **Archiver** | ^7.0.1 | Compressão ZIP |
+| **Prisma** | ^6.8.2 | ORM para PostgreSQL |
+| **AWS S3** | - | Armazenamento de arquivos |
+| **Prometheus** | - | Coleta de métricas |
 
 ## 📋 Pré-requisitos
 
 - **Node.js** >= 20.0.0
 - **npm** >= 10.0.0
 - **Docker** e **Docker Compose** (recomendado)
-- **FFmpeg** (instalado automaticamente via dependência)
+- **Redis** (para fila de jobs)
+- **PostgreSQL** (para persistência de dados)
+- **AWS S3** (para armazenamento de arquivos)
 
 ## 🚀 Instalação
 
@@ -120,12 +136,6 @@ npx prisma migrate deploy
 npx prisma generate
 ```
 
-### Popule o banco com dados iniciais (opcional)
-
-```bash
-npx prisma db seed
-```
-
 ## ⚙️ Configuração
 
 Edite o arquivo `.env` com suas configurações:
@@ -137,24 +147,24 @@ POSTGRES_PASSWORD=postgres123
 POSTGRES_DB=tc5hack
 DATABASE_URL=postgresql://postgres:postgres123@localhost:5432/tc5hack?schema=public
 
-# Redis
+# Redis (Fila de Jobs)
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-# JWT
-JWT_SECRET=your-super-secret-key
+# AWS S3 (Armazenamento)
+AWS_S3_BUCKET=your-bucket-name
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_REGION=us-east-1
 
 # Application
 NODE_ENV=development
-PORT=3000
-
-# AWS S3 (opcional)
-AWS_S3_BUCKET=your-bucket-name
+PORT=8000
 
 # Output
 OUTPUT_FILE_NAME=output.zip
 
-# Grafana
+# Monitoramento (Grafana)
 GRAFANA_USER=admin
 GRAFANA_PASSWORD=admin
 ```
@@ -164,10 +174,10 @@ GRAFANA_PASSWORD=admin
 ### Desenvolvimento
 
 ```bash
-# Iniciar serviços com Docker
+# Iniciar serviços de infraestrutura
 docker-compose up -d postgres redis
 
-# Executar aplicação em modo desenvolvimento
+# Executar worker em modo desenvolvimento
 npm run start:dev
 ```
 
@@ -177,7 +187,7 @@ npm run start:dev
 # Build da aplicação
 npm run build
 
-# Executar em produção
+# Executar worker em produção
 npm run start:prod
 ```
 
@@ -187,93 +197,81 @@ npm run start:prod
 # Iniciar todos os serviços
 docker-compose up -d
 
-# Verificar logs
+# Verificar logs do worker
 docker-compose logs -f api
 ```
 
-## 📡 API Endpoints
+## 🎬 Fluxo de Processamento
 
-### Autenticação
+### Estrutura do Job
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| `POST` | `/auth/signin` | Autenticar usuário |
+O worker espera jobs na fila `video-processing` com o seguinte formato:
 
-**Request Body:**
-```json
-{
-  "email": "user@example.com",
-  "password": "password123"
+```typescript
+interface JobData {
+  videoId: string;      // ID único do vídeo
+  userId: string;       // ID do usuário proprietário
+  originalName: string; // Nome original do arquivo
+  timestamp: number;    // Timestamp de criação
 }
 ```
 
-### Usuários
+### Etapas do Processamento
 
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| `POST` | `/users` | Criar novo usuário |
-
-### Vídeos
-
-| Método | Endpoint | Descrição | Auth |
-|--------|----------|-----------|------|
-| `POST` | `/video` | Upload de vídeo | ✅ |
-| `GET` | `/video/status/:jobId` | Status do processamento | ✅ |
-| `GET` | `/video/:userId/:videoId` | Download do resultado | ✅ |
-
-### Upload de Vídeo
-
-**Request (multipart/form-data):**
-- `file`: Arquivo de vídeo
-- `file_name`: Nome do arquivo
-- `extension`: Extensão (opcional)
-- `userId`: ID do usuário
-
-**Response:**
-```json
-{
-  "jobId": "uuid",
-  "status": "Processing",
-  "videoId": "uuid"
-}
-```
-
-### Monitoramento
-
-| Método | Endpoint | Descrição |
-|--------|----------|-----------|
-| `GET` | `/metrics` | Métricas Prometheus |
-| `GET` | `/admin/queues` | Dashboard Bull Board |
-
-## 🎬 Processamento de Vídeos
-
-### Fluxo de Processamento
-
-1. **Upload**: Vídeo é recebido e salvo no storage
-2. **Enfileiramento**: Job é adicionado à fila BullMQ
-3. **Processamento**: Worker extrai frames usando FFmpeg (1 fps)
-4. **Compressão**: Frames são compactados em ZIP
-5. **Armazenamento**: ZIP é salvo no S3 ou storage local
-6. **Notificação**: Status é atualizado no banco de dados
+| Etapa | Progresso | Descrição |
+|-------|-----------|-----------|
+| 1 | 0% | Job recebido da fila |
+| 2 | 10% | Vídeo baixado do S3 |
+| 3 | 10-60% | Extração de frames (FFmpeg - 1 fps) |
+| 4 | 60-80% | Compressão dos frames em ZIP |
+| 5 | 80-100% | Upload do ZIP para S3 |
+| 6 | 100% | Status atualizado para COMPLETED |
 
 ### Status do Vídeo
 
 | Status | Descrição |
 |--------|-----------|
 | `PENDING` | Aguardando processamento |
-| `PROCESSING` | Em processamento |
-| `COMPLETED` | Processamento concluído |
-| `ERROR` | Erro no processamento |
+| `PROCESSING` | Worker processando o vídeo |
+| `COMPLETED` | Processamento concluído com sucesso |
+| `ERROR` | Erro durante o processamento |
 
-### Formatos Suportados
+### Estrutura de Arquivos no S3
 
-- MP4, AVI, MOV, MKV, WMV, FLV, WEBM
+```
+bucket/
+└── {userId}/
+    └── {videoId}/
+        ├── video-original.mp4    # Vídeo de entrada
+        └── output.zip            # Frames compactados
+```
 
 ## 📊 Monitoramento
 
-### Prometheus + Grafana
+### Endpoints Disponíveis
 
-O projeto inclui configuração completa de monitoramento:
+> ⚠️ **Importante**: Este worker **não expõe rotas de API REST**. Os únicos endpoints disponíveis são para monitoramento:
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| `GET` | `/metrics` | Métricas no formato Prometheus |
+| `GET` | `/admin/queues` | Dashboard Bull Board |
+
+### Bull Board
+
+Acesse o painel de monitoramento de filas:
+
+```
+http://localhost:8000/admin/queues
+```
+
+Funcionalidades:
+- Visualizar jobs pendentes, ativos, completados e com erro
+- Retry de jobs com falha
+- Visualizar detalhes e progresso de cada job
+- Limpar filas
+
+### Prometheus + Grafana
 
 ```bash
 # Acessar Grafana
@@ -286,17 +284,9 @@ Senha: admin
 
 ### Dashboards Disponíveis
 
-- **API NestJS Metrics**: Métricas da aplicação
+- **API Metrics**: Métricas do worker (jobs processados, tempo de execução)
 - **PostgreSQL**: Métricas do banco de dados
-- **AWS S3**: Métricas do storage (se configurado)
-
-### Bull Board
-
-Acesse o painel de monitoramento de filas:
-
-```
-http://localhost:3000/admin/queues
-```
+- **AWS S3**: Métricas de storage
 
 ## 🧪 Testes
 
@@ -320,9 +310,9 @@ npm run test:e2e
 
 | Serviço | Porta | Descrição |
 |---------|-------|-----------|
-| `api` | 3000 | Aplicação NestJS |
+| `api` (worker) | 8000 | Worker de processamento |
 | `postgres` | 5432 | Banco de dados |
-| `redis` | 6379 | Broker de mensagens |
+| `redis` | 6379 | Broker de mensagens/filas |
 | `prometheus` | 9090 | Coleta de métricas |
 | `grafana` | 3001 | Visualização de métricas |
 | `postgres-exporter` | 9187 | Exportador PostgreSQL |
@@ -339,11 +329,11 @@ docker-compose down
 # Reconstruir imagens
 docker-compose up -d --build
 
-# Ver logs
-docker-compose logs -f [service]
+# Ver logs do worker
+docker-compose logs -f api
 
-# Acessar container
-docker exec -it [container-name] sh
+# Escalar workers (processar mais jobs em paralelo)
+docker-compose up -d --scale api=3
 ```
 
 ## 📁 Estrutura do Projeto
@@ -351,69 +341,81 @@ docker exec -it [container-name] sh
 ```
 tc5-videoprocessor/
 ├── prisma/
-│   ├── migrations/          # Migrações do banco
-│   ├── schema.prisma        # Schema do Prisma
-│   └── seed.ts              # Seed do banco
+│   ├── migrations/              # Migrações do banco
+│   ├── schema.prisma            # Schema do Prisma
+│   └── seed.ts                  # Seed do banco
 ├── src/
-│   ├── database/            # Conexão com banco
-│   ├── storage/             # Módulo de armazenamento
-│   ├── video/
-│   │   ├── domain/          # Entidades
+│   ├── database/                # Conexão com banco
+│   ├── storage/
+│   │   ├── domain/              # Entidade Storage
 │   │   ├── gateways/
-│   │   │   ├── processor/   # Serviço FFmpeg
-│   │   │   ├── queue/       # Consumer BullMQ
-│   │   │   └── repository/  # Repositório Prisma
-│   │   └── usecases/        # Casos de uso
-│   ├── app.module.ts        # Módulo principal
-│   └── main.ts              # Bootstrap
+│   │   │   └── repository/      # Repositório S3
+│   │   └── usecases/            # Upload/Download/Delete
+│   ├── video/
+│   │   ├── domain/              # Entidade Video
+│   │   ├── gateways/
+│   │   │   ├── processor/       # Serviço FFmpeg
+│   │   │   ├── queue/           # Consumer BullMQ
+│   │   │   └── repository/      # Repositório Prisma
+│   │   └── usecases/            # Casos de uso
+│   ├── app.module.ts            # Módulo principal
+│   └── main.ts                  # Bootstrap
 ├── monitoring/
 │   ├── grafana/
-│   │   ├── dashboards/      # Dashboards JSON
-│   │   └── provisioning/    # Configuração automática
-│   └── prometheus.yml       # Configuração Prometheus
-├── test/                    # Testes e2e
-├── docker-compose.yml       # Orquestração Docker
-├── Dockerfile               # Build da aplicação
+│   │   ├── dashboards/          # Dashboards JSON
+│   │   └── provisioning/        # Configuração automática
+│   └── prometheus.yml           # Configuração Prometheus
+├── docker-compose.yml           # Orquestração Docker
+├── Dockerfile                   # Build da aplicação
 └── package.json
 ```
 
-## 🔐 Autenticação
+## 🔄 Integração com Outros Serviços
 
-O sistema utiliza JWT para autenticação. Após o login, inclua o token no header:
+Para enviar jobs para este worker, outros serviços devem:
+
+1. Conectar ao mesmo Redis
+2. Adicionar jobs na fila `video-processing`
+
+### Exemplo de envio de job (outro serviço)
+
+```typescript
+import { Queue } from 'bullmq';
+
+const videoQueue = new Queue('video-processing', {
+  connection: {
+    host: 'redis',
+    port: 6379,
+  },
+});
+
+// Enviar job para processamento
+await videoQueue.add('process-video', {
+  videoId: 'uuid-do-video',
+  userId: 'uuid-do-usuario',
+  originalName: 'video.mp4',
+  timestamp: Date.now(),
+});
+```
+
+## 📝 Logs
+
+O worker utiliza o logger do NestJS com os seguintes níveis:
 
 ```
-Authorization: Bearer <token>
+[VideoConsumer] Processing job {jobId} for video {videoId}
+[VideoConsumer] Extracting frames for video {videoId}
+[VideoConsumer] Compressing frames for video {videoId}
+[VideoConsumer] Video {videoId} processed successfully
+[VideoConsumer] Failed to process video {videoId}: {error}
 ```
-
-### Usuário de Teste
-
-```
-Email: admin@athena.com
-Senha: 123456
-```
-
-## 📝 Postman Collection
-
-Importe a collection disponível em [postman_collection.json](postman_collection.json) para testar a API.
-
-## 🤝 Contribuição
-
-1. Faça um fork do projeto
-2. Crie uma branch para sua feature (`git checkout -b feature/nova-feature`)
-3. Commit suas mudanças (`git commit -m 'Adiciona nova feature'`)
-4. Push para a branch (`git push origin feature/nova-feature`)
-5. Abra um Pull Request
 
 ## 📄 Licença
 
 Este projeto está sob licença privada (UNLICENSED).
 
-## 👥 Autores
-
-- **Time TC5** - Desenvolvimento inicial
-
 ---
 
 <p align="center">
-  Desenvolvido com ❤️ usando <a href="https://nestjs.com">NestJS</a>
+  Desenvolvido com ❤️ usando <a href="https://nestjs.com">NestJS</a> + <a href="https://docs.bullmq.io">BullMQ</a>
 </p>
