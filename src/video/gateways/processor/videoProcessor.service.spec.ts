@@ -1,16 +1,38 @@
-import { VideoProcessorService } from './videoProcessor.service';
-import { FrameFile } from '../videoProcessor';
+jest.mock('fluent-ffmpeg', () => {
+  const mockFfmpeg = jest.fn(() => ({
+    fps: jest.fn().mockReturnThis(),
+    output: jest.fn().mockReturnThis(),
+    on: jest.fn(function (event, callback) {
+      if (event === 'end') {
+        setTimeout(() => callback(), 0);
+      }
+      return this;
+    }),
+    run: jest.fn(),
+  }));
+  mockFfmpeg.setFfmpegPath = jest.fn();
+  return mockFfmpeg;
+});
 
-jest.mock('fluent-ffmpeg', () => ({
-  default: {
-    setFfmpegPath: jest.fn(),
-  },
-  setFfmpegPath: jest.fn(),
-}));
-jest.mock('archiver', () => jest.fn());
+jest.mock('archiver', () => {
+  return jest.fn(() => {
+    const EventEmitter = require('events').EventEmitter;
+    const archiver = new EventEmitter();
+    archiver.append = jest.fn();
+    archiver.finalize = jest.fn(() => {
+      setTimeout(() => archiver.emit('data', Buffer.from('test')), 0);
+      setTimeout(() => archiver.emit('end'), 10);
+    });
+    return archiver;
+  });
+});
+
 jest.mock('@ffmpeg-installer/ffmpeg', () => ({
   path: '/mock/ffmpeg/path',
 }));
+
+import { VideoProcessorService } from './videoProcessor.service';
+import { FrameFile } from '../videoProcessor';
 
 describe('VideoProcessorService', () => {
   let service: VideoProcessorService;
@@ -33,124 +55,42 @@ describe('VideoProcessorService', () => {
   });
 
   describe('extractFrames', () => {
-    it('should be callable with buffer', async () => {
-      const buffer = Buffer.from('test video');
-      expect(typeof service.extractFrames).toBe('function');
-      // Test method signature
+    it('should have correct method signature', () => {
       expect(service.extractFrames.length).toBe(1);
     });
 
-    it('should return Frame array from extractFrames', async () => {
-      expect(typeof service.extractFrames).toBe('function');
+    it('should return Promise', () => {
+      const buffer = Buffer.from('test');
+      const result = service.extractFrames(buffer);
+      expect(result instanceof Promise).toBe(true);
     });
   });
 
   describe('compressFrames', () => {
-    it('should be callable with frames array', async () => {
-      const frames: FrameFile[] = [];
-      expect(typeof service.compressFrames).toBe('function');
+    it('should have correct method signature', () => {
       expect(service.compressFrames.length).toBe(1);
     });
 
-    it('should return Buffer from compressFrames', async () => {
-      expect(typeof service.compressFrames).toBe('function');
-    });
-  });
-
-  describe('Interface implementation', () => {
-    it('should implement VideoProcessorInterface methods', () => {
-      const methods = ['extractFrames', 'compressFrames'];
-      methods.forEach((method) => {
-        expect(typeof (service as any)[method]).toBe('function');
-      });
+    it('should return Promise', () => {
+      const frames: FrameFile[] = [];
+      const result = service.compressFrames(frames);
+      expect(result instanceof Promise).toBe(true);
     });
 
-    it('should have both required methods', () => {
-      expect(service).toHaveProperty('extractFrames');
-      expect(service).toHaveProperty('compressFrames');
+    it('should accept empty frame array', async () => {
+      const frames: FrameFile[] = [];
+      const result = await service.compressFrames(frames);
+      expect(Buffer.isBuffer(result)).toBe(true);
     });
 
-    it('should not have extra methods', () => {
-      const ownKeys = Object.getOwnPropertyNames(
-        Object.getPrototypeOf(service),
-      ).filter((key) => key !== 'constructor');
-      expect(ownKeys).toContain('extractFrames');
-      expect(ownKeys).toContain('compressFrames');
-    });
-
-    it('should be instantiable', () => {
-      expect(() => new VideoProcessorService()).not.toThrow();
-    });
-
-    it('should create different instances on each call', () => {
-      const service1 = new VideoProcessorService();
-      const service2 = new VideoProcessorService();
-      expect(service1).not.toBe(service2);
-    });
-
-    it('should have same interface across instances', () => {
-      const service1 = new VideoProcessorService();
-      const service2 = new VideoProcessorService();
-      expect(typeof service1.extractFrames).toBe(
-        typeof service2.extractFrames,
-      );
-      expect(typeof service1.compressFrames).toBe(
-        typeof service2.compressFrames,
-      );
-    });
-
-    it('should have methods as async functions', async () => {
-      expect(service.extractFrames.constructor.name).toBe('AsyncFunction');
-      expect(service.compressFrames.constructor.name).toBe('AsyncFunction');
-    });
-
-    it('should be instance of VideoProcessorService', () => {
-      expect(service instanceof VideoProcessorService).toBe(true);
-    });
-
-    it('should have correct prototype chain', () => {
-      expect(
-        Object.getPrototypeOf(service).constructor.name,
-      ).toBe('VideoProcessorService');
-    });
-
-    it('should be able to call methods (even if they fail)', async () => {
-      // This tests that the methods exist and are callable
-      const buffer = Buffer.from('test');
-      try {
-        await service.extractFrames(buffer);
-      } catch (e) {
-        // Expected to fail since we haven't fully mocked FFmpeg
-      }
-      expect(true).toBe(true);
-    });
-  });
-
-  describe('Service structure', () => {
-    it('should have constructor that accepts no parameters for DI', () => {
-      const service2 = new VideoProcessorService();
-      expect(service2).toBeDefined();
-    });
-
-    it('should be decoratable with @Injectable()', () => {
-      // The service is already decorated
-      expect(service).toBeDefined();
-    });
-
-    it('should have synchronized initialization', () => {
-      expect(() => {
-        const s = new VideoProcessorService();
-        expect(s).toBeDefined();
-      }).not.toThrow();
-    });
-
-    it('should maintain method consistency', () => {
-      const service1 = new VideoProcessorService();
-      const service2 = new VideoProcessorService();
-
-      expect(Object.getOwnPropertyNames(service1)).toEqual(
-        Object.getOwnPropertyNames(service2),
-      );
+    it('should accept frames with data', async () => {
+      const frames: FrameFile[] = [
+        { name: 'frame-001.png', data: Buffer.from('frame1') },
+        { name: 'frame-002.png', data: Buffer.from('frame2') },
+      ];
+      const result = await service.compressFrames(frames);
+      expect(Buffer.isBuffer(result)).toBe(true);
+      expect(result.length).toBeGreaterThan(0);
     });
   });
 });
