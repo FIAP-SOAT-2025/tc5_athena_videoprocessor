@@ -3,10 +3,6 @@ name: Videoprocessor Deploy
 on:
   push:
     branches: [main]
-    paths: ['/**']
-  pull_request:
-    branches: [main]
-    paths: ['/**']
   workflow_dispatch:
     inputs:
       action:
@@ -27,6 +23,7 @@ jobs:
   check-dependencies:
     name: Check Dependencies
     runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
     environment: production
     outputs:
       infra-exists: ${{ steps.check-deps.outputs.infra-exists }}
@@ -54,9 +51,8 @@ jobs:
 
   build-and-push:
     name: Build and Push Docker Image
-    needs: [check-dependencies]
     runs-on: ubuntu-latest
-    if: needs.check-dependencies.outputs.infra-exists == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply')
+    if: github.event_name == 'push'
     environment: production
     steps:
       - name: Checkout Code
@@ -77,9 +73,9 @@ jobs:
 
   deploy:
     name: Videoprocessor Deploy
-    needs: [check-dependencies, build-and-push]
+    needs: [check-dependencies]
     runs-on: ubuntu-latest
-    if: needs.check-dependencies.outputs.infra-exists == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply' && needs.check-dependencies.outputs.infra-exists == 'true'
     environment: production
     steps:
       - name: Configure AWS Credentials
