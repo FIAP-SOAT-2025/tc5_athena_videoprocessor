@@ -1,4 +1,4 @@
-name: Athena Deploy
+name: Videoprocessor Deploy
 
 on:
   push:
@@ -17,11 +17,12 @@ on:
         options:
           - apply
           - destroy
+          - s3
 
 env:
   AWS_REGION: us-east-1
   TF_VERSION: 1.6.0
-  EKS_CLUSTER_NAME: eks-tc5-g192-athena-v1-v1
+  EKS_CLUSTER_NAME: eks-tc5-g192-athena
 
 jobs:
   check-dependencies:
@@ -75,30 +76,13 @@ jobs:
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/tc5-athena-videoprocessor:latest
 
-  terraform-apply:
-    name: Worker Deploy
+  deploy:
+    name: Videoprocessor Deploy
     needs: [check-dependencies, build-and-push]
     runs-on: ubuntu-latest
     if: needs.check-dependencies.outputs.infra-exists == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply')
-    defaults:
-      run:
-        working-directory: ./iac/terraform
     environment: production
-    env:
-      TF_VAR_db_user: ${{ secrets.DB_USER }}
-      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-      TF_VAR_db_name: ${{ secrets.DB_NAME }}
-      TF_VAR_dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
-      TF_VAR_dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -117,56 +101,37 @@ jobs:
           aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
           kubectl get nodes
 
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+      - name: Restart Deployment
+        run: |
+          kubectl rollout restart deployment/athena-videoprocessor -n athena-tc5
+          kubectl rollout status deployment/athena-videoprocessor -n athena-tc5 --timeout=300s
 
       - name: Debug pods on failure
         if: failure()
         run: |
           echo "=== Pods ==="
-          kubectl get pods -n tc5-athena -o wide || true
+          kubectl get pods -n athena-tc5 -l app=athena-videoprocessor -o wide || true
           echo "=== Describe pods ==="
-          kubectl describe pods -n tc5-athena || true
+          kubectl describe pods -n athena-tc5 -l app=athena-videoprocessor || true
           echo "=== Logs (current) ==="
-          kubectl logs -n tc5-athena -l app=tc5-athena-videoprocessor --tail=100 || true
+          kubectl logs -n athena-tc5 -l app=athena-videoprocessor --tail=100 || true
           echo "=== Logs (previous crash) ==="
-          kubectl logs -n tc5-athena -l app=tc5-athena-videoprocessor --previous --tail=100 || true
+          kubectl logs -n athena-tc5 -l app=athena-videoprocessor --previous --tail=100 || true
           echo "=== Events ==="
-          kubectl get events -n tc5-athena --sort-by='.lastTimestamp' || true
+          kubectl get events -n athena-tc5 --sort-by='.lastTimestamp' || true
 
-      - name: Verify Worker Deployment
+      - name: Verify Deployment
         run: |
-          echo "Waiting for worker pod to be ready..."
-          kubectl wait --for=condition=ready pod -l app=tc5-athena-videoprocessor -n tc5-athena --timeout=5m
-          kubectl get pods -n tc5-athena
+          echo "Waiting for videoprocessor pod to be ready..."
+          kubectl wait --for=condition=ready pod -l app=athena-videoprocessor -n athena-tc5 --timeout=5m
+          kubectl get pods -n athena-tc5 -l app=athena-videoprocessor
 
-  terraform-destroy:
-    name: Worker Destroy
+  destroy:
+    name: Videoprocessor Destroy
     runs-on: ubuntu-latest
     if: github.event.inputs.action == 'destroy'
-    defaults:
-      run:
-        working-directory: ./iac/terraform
     environment: production
-    env:
-      TF_VAR_db_user: ${{ secrets.DB_USER }}
-      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-      TF_VAR_db_name: ${{ secrets.DB_NAME }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-      
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-      
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -174,12 +139,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
-      
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v3
         with:
           version: 'v1.28.0'
-      
+
       - name: Check if EKS cluster exists
         id: check-cluster
         run: |
@@ -190,43 +155,63 @@ jobs:
             echo "cluster-exists=false" >> $GITHUB_OUTPUT
             echo "EKS cluster not found, skipping kubectl configuration"
           fi
-      
+
       - name: Configure kubectl
         if: steps.check-cluster.outputs.cluster-exists == 'true'
         run: |
           aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
           kubectl get nodes || echo "Failed to get nodes, but continuing..."
-      
-      - name: Terraform Init
-        run: terraform init
-      
-      - name: Check Terraform State
-        id: check-state
+
+      - name: Delete Videoprocessor Deployment
+        if: steps.check-cluster.outputs.cluster-exists == 'true'
         run: |
-          if [ -f "terraform.tfstate" ]; then
-            echo "state-exists=true" >> $GITHUB_OUTPUT
-            echo "Terraform state found. Contents:"
-            cat terraform.tfstate
-          else
-            echo "state-exists=false" >> $GITHUB_OUTPUT
-            echo "No Terraform state found"
-          fi
-      
-      - name: Terraform Plan Destroy
-        if: steps.check-state.outputs.state-exists == 'true'
-        run: terraform plan -destroy -no-color
-        continue-on-error: true
-      
-      - name: Terraform Destroy
-        if: steps.check-state.outputs.state-exists == 'true'
-        run: |
-          echo "Destroying API infrastructure..."
-          terraform destroy -auto-approve
-      
+          echo "Deleting videoprocessor deployment..."
+          kubectl delete deployment athena-videoprocessor -n athena-tc5 --ignore-not-found=true
+          echo "Videoprocessor deployment deleted"
+
       - name: Verify Destruction
+        if: steps.check-cluster.outputs.cluster-exists == 'true'
         run: |
           echo "Verifying resource destruction..."
-          if [ "${{ steps.check-cluster.outputs.cluster-exists }}" == "true" ]; then
-            kubectl get pods -n tc5-athena 2>/dev/null || echo "Namespace tc5-athena destroyed or not found"
-          fi
-          echo "Worker destroy job completed"
+          kubectl get pods -n athena-tc5 -l app=athena-videoprocessor 2>/dev/null || echo "Videoprocessor pods not found"
+          echo "Videoprocessor destroy job completed"
+
+  s3-deploy:
+    name: S3 Deploy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 's3'
+    environment: production
+    defaults:
+      run:
+        working-directory: ./s3/
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check AWS Credentials
+        run: aws sts get-caller-identity
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
