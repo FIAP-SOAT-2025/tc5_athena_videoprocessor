@@ -1,3 +1,38 @@
+jest.mock('bullmq', () => ({
+  Job: jest.fn(),
+  Worker: jest.fn(() => ({
+    on: jest.fn(),
+    close: jest.fn(),
+  })),
+  Queue: jest.fn(() => ({
+    add: jest.fn(),
+    process: jest.fn(),
+  })),
+}));
+
+jest.mock('@nestjs/bullmq', () => ({
+  BullModule: {
+    forRoot: jest.fn(() => ({ module: {} })),
+    registerQueue: jest.fn(() => ({ module: {} })),
+  },
+  InjectQueue: () => (target: any, propertyKey: string | symbol | undefined, parameterIndex: number) => {},
+  WorkerHost: class WorkerHostMock {
+    on = jest.fn();
+  },
+  Processor: () => (target: any) => target,
+}));
+
+jest.mock('@prisma/client', () => ({
+  PrismaClient: jest.fn(() => ({
+    video: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      findMany: jest.fn(),
+    },
+  })),
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { VideoConsumer } from './video.consumer';
 import { Job } from 'bullmq';
