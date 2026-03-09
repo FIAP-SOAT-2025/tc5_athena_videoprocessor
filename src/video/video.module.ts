@@ -8,6 +8,7 @@ import { dbConection } from '../database/dbConection';
 import { PrismaVideoRepository } from './gateways/repository/video.repository';
 import { FileStorageUseCase } from './usecases/fileStorage.usecase';
 import { StorageModule } from '../storage/storage.module';
+import { NotificationService } from './services/notification.service';
 @Module({
   imports: [
     ConfigModule.forRoot(),
@@ -27,6 +28,7 @@ import { StorageModule } from '../storage/storage.module';
     FileStorageUseCase,
     VideoConsumer,
     PrismaVideoRepository,
+    NotificationService,
     {
       provide: 'VideoProcessorInterface',
       useClass: VideoProcessorService,

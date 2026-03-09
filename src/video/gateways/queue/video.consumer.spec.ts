@@ -40,6 +40,7 @@ import { VideoStatus } from '../../domain/video.entity';
 import { ConfigService } from '@nestjs/config';
 import { PrismaVideoRepository } from '../repository/video.repository';
 import { FileStorageUseCase } from 'src/video/usecases/fileStorage.usecase';
+import { NotificationService } from '../../services/notification.service';
 import type { VideoProcessorInterface } from '../videoProcessor';
 
 describe('VideoConsumer', () => {
@@ -48,6 +49,7 @@ describe('VideoConsumer', () => {
   let videoRepositoryMock: PrismaVideoRepository;
   let fileStorageUseCaseMock: FileStorageUseCase;
   let configServiceMock: ConfigService;
+  let notificationServiceMock: NotificationService;
 
   const mockVideoProcessor: VideoProcessorInterface = {
     extractFrames: jest.fn(),
@@ -65,6 +67,12 @@ describe('VideoConsumer', () => {
 
   const mockConfigService = {
     get: jest.fn().mockReturnValue('output.zip'),
+  };
+
+  const mockNotificationService = {
+    sendSuccessNotification: jest.fn(),
+    sendErrorNotification: jest.fn(),
+    healthCheck: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -89,6 +97,10 @@ describe('VideoConsumer', () => {
           provide: ConfigService,
           useValue: mockConfigService,
         },
+        {
+          provide: NotificationService,
+          useValue: mockNotificationService,
+        },
       ],
     }).compile();
 
@@ -99,6 +111,7 @@ describe('VideoConsumer', () => {
     );
     fileStorageUseCaseMock = module.get<FileStorageUseCase>(FileStorageUseCase);
     configServiceMock = module.get<ConfigService>(ConfigService);
+    notificationServiceMock = module.get<NotificationService>(NotificationService);
   });
 
   it('should be defined', () => {
