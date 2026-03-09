@@ -72,27 +72,36 @@ export class VideoConsumer
       );
       await job.updateProgress(100);
       await this.videoRepository.updateStatus(videoId, VideoStatus.COMPLETED);
-    
+
+       await this.notificationService.sendSuccessNotification(
+          userId,
+          originalName,
+          userEmail,
+          userName,
+        );
+
       this.logger.log(`Video ${videoId} processed successfully`);
       return { fileName: this.outputFileName, path: storedPath };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Failed to process video ${videoId}: ${message}`);
       await this.videoRepository.updateStatus(videoId, VideoStatus.ERROR);
-      
+
       try {
         await this.notificationService.sendErrorNotification(
           userId,
           originalName,
           message,
-          userEmail, 
-          userName
+          userEmail,
+          userName,
         );
         this.logger.log(`✅ Error notification sent for video ${videoId}`);
       } catch (notificationError) {
-        this.logger.warn(`⚠️ Failed to send error notification: ${notificationError}`);
+        this.logger.warn(
+          `⚠️ Failed to send error notification: ${notificationError}`,
+        );
       }
-      
+
       throw new Error(`Erro no processamento do vídeo: ${message}`);
     }
   }
