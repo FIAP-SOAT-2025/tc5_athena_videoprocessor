@@ -71,14 +71,9 @@ export class VideoConsumer
         'application/zip',
       );
       await job.updateProgress(100);
+      throw new Error("Testando fluxo de erro da lambda");
       await this.videoRepository.updateStatus(videoId, VideoStatus.COMPLETED);
 
-       await this.notificationService.sendSuccessNotification(
-          userId,
-          originalName,
-          userEmail,
-          userName,
-        );
 
       this.logger.log(`Video ${videoId} processed successfully`);
       return { fileName: this.outputFileName, path: storedPath };
