@@ -55,12 +55,13 @@ export class VideoConsumer
         throw new Error('Arquivo de vídeo não encontrado ou vazio');
       }
       await this.videoRepository.updateStatus(videoId, VideoStatus.PROCESSING);
-
+      
       await job.updateProgress(10);
       this.logger.log(`Extracting frames for video ${videoId}`);
       const frames = await this.videoProcessor.extractFrames(file.body);
-
+      throw new Error('Simulated fluxo de email de error'); 
       await job.updateProgress(60);
+
       this.logger.log(`Compressing frames for video ${videoId}`);
       const zipBuffer = await this.videoProcessor.compressFrames(frames);
 

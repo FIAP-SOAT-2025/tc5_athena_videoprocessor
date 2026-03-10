@@ -33,6 +33,7 @@ export class NotificationService {
 
   async sendNotification(payload: NotificationPayload): Promise<NotificationResponse> {
     this.logger.log(`Sending ${payload.type} notification for file: ${payload.filename}`);
+    this.logger.log("payload", payload);
 
     try {
       if (this.isLocal) {
@@ -82,7 +83,7 @@ export class NotificationService {
       username: username || 'Usuário',
       filename
     };
-
+    this.logger.log("payload", payload);
     return this.sendNotification(payload);
   }
 
@@ -125,13 +126,15 @@ export class NotificationService {
 
   private async sendAWSLambdaNotification(payload: NotificationPayload): Promise<NotificationResponse> {
     this.logger.log(`🔄 Sending notification to AWS Lambda: ${this.functionName}`);
+    this.logger.log("payload", payload);
 
     try {
            
       const lambda = new AWS.Lambda({
         region: this.configService.get<string>('AWS_REGION', 'us-east-1'),
         accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID'),
-        secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY'),
+        secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY' ),
+        sessionToken: this.configService.get<string>('AWS_SESSION_TOKEN'),
       });
 
       const params = {
