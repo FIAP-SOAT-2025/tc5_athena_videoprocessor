@@ -59,7 +59,6 @@ export class VideoConsumer
       await job.updateProgress(10);
       this.logger.log(`Extracting frames for video ${videoId}`);
       const frames = await this.videoProcessor.extractFrames(file.body);
-      throw new Error('Simulated fluxo de email de error'); 
       await job.updateProgress(60);
 
       this.logger.log(`Compressing frames for video ${videoId}`);

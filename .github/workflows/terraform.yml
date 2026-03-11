@@ -16,43 +16,13 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  TF_VERSION: 1.6.0
-  EKS_CLUSTER_NAME: eks-tc5-g192-athena-v1-v1
+  EKS_CLUSTER_NAME: eks-tc5-g192-athena-v1
 
 jobs:
-  check-dependencies:
-    name: Check Dependencies
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-    environment: production
-    outputs:
-      infra-exists: ${{ steps.check-deps.outputs.infra-exists }}
-
-    steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Check Dependencies
-        id: check-deps
-        run: |
-          # Check EKS cluster
-          if aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} &> /dev/null; then
-            echo "infra-exists=true" >> $GITHUB_OUTPUT
-            echo "EKS cluster exists"
-          else
-            echo "infra-exists=false" >> $GITHUB_OUTPUT
-            echo "EKS cluster not found"
-          fi
-
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
     environment: production
     steps:
       - name: Checkout Code
@@ -72,10 +42,10 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/tc5-athena-videoprocessor:latest
 
   deploy:
-    name: Videoprocessor Deploy
-    needs: [check-dependencies]
+    name: Restart Videoprocessor
+    needs: [build-and-push]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply' && needs.check-dependencies.outputs.infra-exists == 'true'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
     environment: production
     steps:
       - name: Configure AWS Credentials
@@ -92,11 +62,20 @@ jobs:
           version: 'v1.28.0'
 
       - name: Configure kubectl
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Check if deployment exists
+        id: check-deploy
         run: |
-          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-          kubectl get nodes
+          if kubectl get deployment athena-videoprocessor -n athena-tc5 &> /dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Deployment not found, skipping restart"
+          fi
 
       - name: Restart Deployment
+        if: steps.check-deploy.outputs.exists == 'true'
         run: |
           kubectl rollout restart deployment/athena-videoprocessor -n athena-tc5
           kubectl rollout status deployment/athena-videoprocessor -n athena-tc5 --timeout=300s
@@ -104,27 +83,14 @@ jobs:
       - name: Debug pods on failure
         if: failure()
         run: |
-          echo "=== Pods ==="
           kubectl get pods -n athena-tc5 -l app=athena-videoprocessor -o wide || true
-          echo "=== Describe pods ==="
           kubectl describe pods -n athena-tc5 -l app=athena-videoprocessor || true
-          echo "=== Logs (current) ==="
           kubectl logs -n athena-tc5 -l app=athena-videoprocessor --tail=100 || true
-          echo "=== Logs (previous crash) ==="
-          kubectl logs -n athena-tc5 -l app=athena-videoprocessor --previous --tail=100 || true
-          echo "=== Events ==="
-          kubectl get events -n athena-tc5 --sort-by='.lastTimestamp' || true
-
-      - name: Verify Deployment
-        run: |
-          echo "Waiting for videoprocessor pod to be ready..."
-          kubectl wait --for=condition=ready pod -l app=athena-videoprocessor -n athena-tc5 --timeout=5m
-          kubectl get pods -n athena-tc5 -l app=athena-videoprocessor
 
   destroy:
     name: Videoprocessor Destroy
     runs-on: ubuntu-latest
-    if: github.event.inputs.action == 'destroy'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
     environment: production
     steps:
       - name: Configure AWS Credentials
@@ -140,33 +106,10 @@ jobs:
         with:
           version: 'v1.28.0'
 
-      - name: Check if EKS cluster exists
-        id: check-cluster
-        run: |
-          if aws eks describe-cluster --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }} &> /dev/null; then
-            echo "cluster-exists=true" >> $GITHUB_OUTPUT
-            echo "EKS cluster exists, configuring kubectl..."
-          else
-            echo "cluster-exists=false" >> $GITHUB_OUTPUT
-            echo "EKS cluster not found, skipping kubectl configuration"
-          fi
-
       - name: Configure kubectl
-        if: steps.check-cluster.outputs.cluster-exists == 'true'
-        run: |
-          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
-          kubectl get nodes || echo "Failed to get nodes, but continuing..."
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
       - name: Delete Videoprocessor Deployment
-        if: steps.check-cluster.outputs.cluster-exists == 'true'
         run: |
-          echo "Deleting videoprocessor deployment..."
           kubectl delete deployment athena-videoprocessor -n athena-tc5 --ignore-not-found=true
           echo "Videoprocessor deployment deleted"
-
-      - name: Verify Destruction
-        if: steps.check-cluster.outputs.cluster-exists == 'true'
-        run: |
-          echo "Verifying resource destruction..."
-          kubectl get pods -n athena-tc5 -l app=athena-videoprocessor 2>/dev/null || echo "Videoprocessor pods not found"
-          echo "Videoprocessor destroy job completed"
