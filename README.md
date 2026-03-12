@@ -303,6 +303,9 @@ npm run test:cov
 # Testes e2e
 npm run test:e2e
 ```
+## Cobertura de testes unitários
+
+![Cobertura de testes](./docs/cobertura_test.png)
 
 ## 🐳 Docker
 
